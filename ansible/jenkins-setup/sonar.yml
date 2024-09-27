@@ -1,0 +1,61 @@
+---
+- name: Install SonarQube Scanner
+  hosts: jenkins  # Make sure to use the correct group for your Jenkins server
+  become: true
+  vars:
+    sonar_scanner_version: "4.7.0.2747"  # Change to a specific version
+    sonar_scanner_url: "https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-{{ sonar_scanner_version }}-linux.zip"
+    sonar_scanner_dir: "/opt/sonar-scanner"
+    jenkins_container_name: "jenkins"
+  tasks:
+    - name: Install required packages
+      apt:
+        name: unzip
+        state: present
+
+    - name: Download SonarQube Scanner
+      get_url:
+        url: "{{ sonar_scanner_url }}"
+        dest: "/tmp/sonar-scanner-cli-{{ sonar_scanner_version }}.zip"
+
+    - name: Unzip SonarQube Scanner
+      unarchive:
+        src: "/tmp/sonar-scanner-cli-{{ sonar_scanner_version }}.zip"
+        dest: "/tmp/"
+        remote_src: yes
+
+    - name: Set use_embed_jre
+      lineinfile:
+        path: "/tmp/sonar-scanner-{{ sonar_scanner_version }}-linux/bin/sonar-scanner"
+        regexp: 'use_embedded_jre=true'
+        line: 'use_embedded_jre=false'
+
+    - name: Copy SonarQube Scanner to Jenkins container
+      shell: |
+        sudo docker cp /tmp/sonar-scanner-{{ sonar_scanner_version }}-linux {{ jenkins_container_name }}:{{ sonar_scanner_dir }}
+
+    - name: Give permission to Jenkins for SonarScanner
+      shell: |
+        sudo docker exec -u root {{ jenkins_container_name }} chown -R jenkins:jenkins {{ sonar_scanner_dir }}/sonar-scanner-{{ sonar_scanner_version }}-linux/
+        sudo docker exec -u root {{ jenkins_container_name }} chmod +x {{ sonar_scanner_dir }}/sonar-scanner-{{ sonar_scanner_version }}-linux/bin/sonar-scanner
+
+    - name: Ensure .bashrc exists for Jenkins user
+      lineinfile:
+        path: "/var/jenkins_home/.bashrc"
+        create: yes  # Create the file if it does not exist
+        line: ''  # Create an empty line, so the file gets created
+
+    - name: Add SonarScanner to Jenkins user's PATH
+      lineinfile:
+        path: "/var/jenkins_home/.bashrc"
+        line: 'export PATH=$PATH:{{ sonar_scanner_dir }}/sonar-scanner-{{ sonar_scanner_version }}-linux/bin'
+        state: present
+
+    - name: Source the updated .bashrc for Jenkins user
+      shell: |
+        sudo docker exec -u jenkins {{ jenkins_container_name }} bash -c "source /var/jenkins_home/.bashrc"
+
+    - name: Clean up downloaded zip file from the host
+      file:
+        path: "/tmp/sonar-scanner-cli-{{ sonar_scanner_version }}.zip"
+        state: absent

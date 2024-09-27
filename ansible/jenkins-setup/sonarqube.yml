@@ -1,0 +1,97 @@
+---
+- hosts: sonarqube
+  vars:
+    sonarqube_port: 9000
+    sonarqube_admin_login: "admin"
+    sonarqube_admin_password: "admin123"
+    sonarqube_project_key: "my_project"
+    sonarqube_project_name: "My Project"
+    sonarqube_token_name: "my_token"
+    quality_gate_name: "Sonar way"  # Name of the quality gate
+  tasks:
+    - name: Wait until SonarQube Container is reachable via TCP/IP.
+      ansible.builtin.wait_for:
+        host: localhost
+        port: "{{ sonarqube_port }}"
+        state: started
+        delay: 5
+        connect_timeout: 15
+        timeout: 30
+    - name: Check SonarQube to be healthy.
+      ansible.builtin.uri:
+        url: "http://localhost:{{ sonarqube_port }}/api/system/health"
+        user: "{{ sonarqube_admin_login }}"
+        password: "{{ sonarqube_admin_password }}"
+        method: GET
+        force_basic_auth: yes
+      register: response
+      until: response.status == 200 and response.json.health == 'GREEN'
+      retries: 20
+      delay: 5
+    - name: Create a new project in SonarQube
+      ansible.builtin.uri:
+        url: "http://localhost:{{ sonarqube_port }}/api/projects/create?project={{ sonarqube_project_key }}&name={{ sonarqube_project_name | urlencode }}"
+        user: "{{ sonarqube_admin_login }}"
+        password: "{{ sonarqube_admin_password }}"
+        method: POST
+        force_basic_auth: yes
+      register: project_response
+    - name: Generate user token
+      ansible.builtin.uri:
+        url: "http://localhost:{{ sonarqube_port }}/api/user_tokens/generate"
+        user: "{{ sonarqube_admin_login }}"
+        password: "{{ sonarqube_admin_password }}"
+        method: POST
+        force_basic_auth: yes
+        body: "name={{ sonarqube_token_name }}"
+        headers:
+          Content-Type: "application/x-www-form-urlencoded"
+      register: token_response
+    - name: Save token to a temporary file on remote
+      ansible.builtin.copy:
+        content: "{{ token_response.json.token }}"
+        dest: "/tmp/sonarqube_token.txt"
+    - name: Fetch token file to local machine
+      ansible.builtin.fetch:
+        src: "/tmp/sonarqube_token.txt"
+        dest: "./sonarqube_token.txt"  # Local path on your Ansible machine
+        flat: yes
+    - name: Clean up temporary token file on remote
+      ansible.builtin.file:
+        path: "/tmp/sonarqube_token.txt"
+        state: absent
+    - name: Set the default quality gate
+      ansible.builtin.uri:
+        url: "http://localhost:{{ sonarqube_port }}/api/qualitygates/set_as_default"
+        user: "{{ sonarqube_admin_login }}"
+        password: "{{ sonarqube_admin_password }}"
+        method: POST
+        force_basic_auth: yes
+        body: "name={{ quality_gate_name | urlencode }}"  # URL-encoded name of the quality gate
+        headers:
+          Content-Type: "application/x-www-form-urlencoded"
+      register: quality_gate_response
+      failed_when: quality_gate_response.status not in [200, 204]  # Allow 204 as a valid response
+    - name: Create webhook
+      ansible.builtin.uri:
+        url: "http://localhost:{{ sonarqube_port }}/api/webhooks/create"
+        user: "{{ sonarqube_admin_login }}"
+        password: "{{ sonarqube_admin_password }}"
+        method: POST
+        force_basic_auth: yes
+        body: "name=My Webhook&project={{ sonarqube_project_key }}&url=http://54.82.5.3:8080/sonarqube-webhook/"
+        headers:
+          Content-Type: "application/x-www-form-urlencoded"
+      register: webhook_response
+    - name: Output project creation result
+      debug:
+        var: project_response
+    - name: Output token generation result
+      debug:
+        var: token_response
+    - name: Output quality gate configuration result
+      debug:
+        var: quality_gate_response
+    - name: Output webhook creation result
+      debug:
+        var: webhook_response

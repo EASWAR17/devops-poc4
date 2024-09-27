@@ -1,0 +1,131 @@
+# jenkins-setup.yml
+---
+- hosts: jenkins
+  become: true
+
+  vars:
+    jenkins_container_name: jenkins
+    groovy_init_dir: /var/jenkins_home/init.groovy.d
+    jenkins_cli_url: "http://localhost:8080/jnlpJars/jenkins-cli.jar"
+    jenkins_host: "54.82.5.3"
+    jenkins_user: "admin"
+    jenkins_password: "admin"
+    pipeline_job_name: "project1"  # Add your pipeline job name here
+
+  tasks:
+    - name: Install dependencies on the host
+      apt:
+        name: curl
+        state: present
+        update_cache: yes
+
+    - name: Ensure Groovy initialization directory exists inside Jenkins container
+      shell: |
+        sudo docker exec {{ jenkins_container_name }} mkdir -p {{ groovy_init_dir }}
+
+    - name: Disable Jenkins setup wizard inside container
+      shell: |
+        sudo docker exec {{ jenkins_container_name }} bash -c 'echo JAVA_OPTS=\"-Djenkins.install.runSetupWizard=false\" >> /var/jenkins_home/init.groovy.d/configuration'
+
+    - name: Place user creation script in Jenkins container
+      shell: |
+        sudo docker exec -i {{ jenkins_container_name }} tee {{ groovy_init_dir }}/basic-security.groovy <<EOF
+        #!groovy
+        import jenkins.model.*
+        import hudson.security.*
+
+        def instance = Jenkins.getInstance()
+
+        println "--> creating local user 'admin'"
+
+        def hudsonRealm = new HudsonPrivateSecurityRealm(false)
+        hudsonRealm.createAccount('admin', 'admin')
+        instance.setSecurityRealm(hudsonRealm)
+
+        def strategy = new FullControlOnceLoggedInAuthorizationStrategy()
+        instance.setAuthorizationStrategy(strategy)
+        instance.save()
+        EOF
+
+    - name: Restart Jenkins container
+      shell: |
+        sudo docker restart {{ jenkins_container_name }}
+
+    - name: Wait for Jenkins to be ready
+      uri:
+        url: "http://localhost:8080"
+        return_content: yes
+        user: admin
+        password: admin
+        force_basic_auth: yes
+      register: jenkins_status
+      retries: 20
+      delay: 10
+      until: jenkins_status.status == 200
+
+    - name: Ensure Jenkins home directory structure exists
+      shell: |
+        docker exec jenkins bash -c "mkdir -p /var/jenkins_home/users/admin"
+
+    - name: Download Jenkins CLI
+      get_url:
+        url: "http://{{ jenkins_host }}:8080/jnlpJars/jenkins-cli.jar"
+        dest: /tmp/jenkins-cli.jar
+
+    - name: Copy jenkins-cli.jar to Jenkins container
+      command: docker cp /tmp/jenkins-cli.jar jenkins:/tmp/jenkins-cli.jar
+
+    - name: Install Jenkins plugins
+      command: >
+        docker exec jenkins java -jar /tmp/jenkins-cli.jar -s http://{{ jenkins_host }}:8080/ -auth {{ jenkins_user }}:{{ jenkins_password }} install-plugin {{ item }}
+      loop:
+        - git
+        - workflow-aggregator
+        - sonar
+      register: install_result
+
+    - name: Verify Jenkins is running
+      shell: |
+        curl -f -u admin:admin 'http://{{ inventory_hostname }}:8080/api/json'
+      register: jenkins_status
+      retries: 5
+      delay: 10
+      until: jenkins_status.rc == 0
+
+    - name: Install Job DSL Plugin on Jenkins
+      shell: |
+        docker exec -i jenkins java -jar /tmp/jenkins-cli.jar -s http://{{ jenkins_host }}:8080/ -auth {{ jenkins_user }}:{{ jenkins_password }} install-plugin job-dsl
+      ignore_errors: true
+
+    - name: Create Jenkins job configuration XML from template
+      template:
+        src: job-config.xml.j2
+        dest: /tmp/job-config.xml
+
+    - name: Upload job configuration XML to Jenkins container
+      command: docker cp /tmp/job-config.xml jenkins:/tmp/job-config.xml
+
+    - name: Create Jenkins pipeline job from XML config
+      shell: |
+        docker exec -i jenkins java -jar /tmp/jenkins-cli.jar -s http://{{ jenkins_host }}:8080/ -auth {{ jenkins_user }}:{{ jenkins_password }} create-job {{ pipeline_job_name }} < /tmp/job-config.xml
+
+    - name: Trigger the Jenkins pipeline job
+      command: >
+        docker exec {{ jenkins_container_name }} java -jar /tmp/jenkins-cli.jar -s http://{{ jenkins_host }}:8080/ -auth {{ jenkins_user }}:{{ jenkins_password }} build {{ pipeline_job_name }}
+      register: build_result
+
+    - name: Wait for the Jenkins job to complete
+      uri:
+        url: "http://{{ jenkins_host }}:8080/job/{{ pipeline_job_name }}/lastBuild/api/json"
+        return_content: yes
+        user: "{{ jenkins_user }}"
+        password: "{{ jenkins_password }}"
+        force_basic_auth: yes
+      register: job_status
+      retries: 20
+      delay: 10
+      until: job_status.json.result is defined
+
+    - name: Retrieve Jenkins build result
+      debug:
+        msg: "The build result for job '{{ pipeline_job_name }}' is: {{ job_status.json.result }}"

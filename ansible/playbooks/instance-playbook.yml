@@ -1,0 +1,60 @@
+---
+- hosts: all
+  become: true
+  tasks:
+    - name: Ensure Docker is installed
+      apt:
+        name: docker.io
+        state: present
+        update_cache: yes
+    - name: Start Docker service
+      service:
+        name: docker
+        state: started
+        enabled: yes
+    - name: Pull Jenkins Docker image
+      docker_image:
+        name: jenkins/jenkins
+        tag: latest
+        source: pull
+    - name: Pull SonarQube Docker image
+      docker_image:
+        name: sonarqube
+        tag: latest
+        source: pull
+    - name: Pull Apache2 Docker image (httpd)
+      docker_image:
+        name: httpd
+        tag: latest
+        source: pull
+    - name: Run Jenkins container
+      docker_container:
+        name: jenkins
+        image: jenkins/jenkins:latest
+        state: started
+        ports:
+          - "8080:8080"
+    - name: Run SonarQube container
+      docker_container:
+        name: sonarqube
+        image: sonarqube:latest
+        state: started
+        ports:
+          - "9000:9000"
+    - name: Ensure Apache2 is installed
+      apt:
+        name: apache2
+        state: present
+        update_cache: yes
+
+    - name: Start and enable Apache2 service
+      service:
+        name: apache2
+        state: started
+        enabled: yes
+
+    - name: Ensure Apache2 is listening on port 80
+      ufw:
+        rule: allow
+        port: "80"
+        proto: tcp
