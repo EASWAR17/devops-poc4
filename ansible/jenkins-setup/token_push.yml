@@ -1,0 +1,48 @@
+---
+- hosts: localhost
+  vars:
+    git_repo_url: "git@github.com:EASWAR17/test.git"  # Use SSH URL for GitHub
+    git_branch: "main"
+    jenkinsfile_path: "jenkinsfile"
+    local_repo_path: "/tmp/repo"
+    sonarqube_token_file: "./sonarqube_token.txt"  # Token file generated earlier
+    commit_message: "Automated: Updated Jenkinsfile with SonarQube token"
+  tasks:
+    - name: Add GitHub to known hosts
+      shell: ssh-keyscan -t rsa github.com >> ~/.ssh/known_hosts
+      args:
+        creates: ~/.ssh/known_hosts
+    - name: Clone the Git repository using SSH
+      ansible.builtin.git:
+        repo: "{{ git_repo_url }}"
+        dest: "{{ local_repo_path }}"
+        version: "{{ git_branch }}"
+    - name: Read the generated SonarQube token
+      ansible.builtin.slurp:
+        src: "{{ sonarqube_token_file }}"
+      register: token_content
+    - name: Convert token to string
+      set_fact:
+        sonarqube_token: "{{ token_content.content | b64decode }}"
+    - name: Update Jenkinsfile with SonarQube token
+      ansible.builtin.lineinfile:
+        path: "{{ local_repo_path }}/{{ jenkinsfile_path }}"
+        regexp: 'sonar.login='  # Assumes the token is added with sonar.login=
+        line: 'sonar.login={{ sonarqube_token }}'
+        backrefs: yes
+    - name: Stage the updated Jenkinsfile
+      command: git add {{ jenkinsfile_path }}
+      args:
+        chdir: "{{ local_repo_path }}"
+    - name: Commit the updated Jenkinsfile
+      command: git commit -m "{{ commit_message }}"
+      args:
+        chdir: "{{ local_repo_path }}"
+    - name: Push the changes to GitHub
+      command: git push origin "{{ git_branch }}"
+      args:
+        chdir: "{{ local_repo_path }}"
+    - name: Clean up the local repo after push
+      file:
+        path: "{{ local_repo_path }}"
+        state: absent
