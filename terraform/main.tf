@@ -43,13 +43,13 @@ resource "aws_security_group" "test-sg" {
 }
 
 resource "aws_instance" "docker_instance" {
-  ami           = "ami-0ed895c6c072f30d9"
+  ami           = "ami-05c8e819330e0eeb5"
   instance_type = "t2.micro"
   key_name      = "MyNewKeyPair"
   vpc_security_group_ids = [aws_security_group.test-sg.id]
 
   tags = {
-    Name = "test-instance34"
+    Name = "test-instance44"
   }
 
   provisioner "remote-exec" {
@@ -66,15 +66,18 @@ resource "aws_instance" "docker_instance" {
   provisioner "local-exec" {
     command = "ansible-playbook -i ${self.public_ip}, --private-key /home/easwar/MyNewKeyPair.pem -u ubuntu --ssh-extra-args='-o StrictHostKeyChecking=no' /home/easwar/ansible/playbooks/instance-playbook.yml"
   }
+  
+  provisioner "local-exec" {
+    command = "ansible-playbook -i ${self.public_ip}, --private-key /home/easwar/MyNewKeyPair.pem -u ubuntu --ssh-extra-args='-o StrictHostKeyChecking=no' /home/easwar/ansible/jenkins-setup/sonarqube.yml"
+  }
 
 
   provisioner "local-exec" {
     command = "ansible-playbook /home/easwar/ansible/jenkins-setup/auto_token.yml"
   }
 
-
   provisioner "local-exec" {
-    command = "ansible-playbook -i ${self.public_ip}, --private-key /home/easwar/MyNewKeyPair.pem -u ubuntu --ssh-extra-args='-o StrictHostKeyChecking=no' /home/easwar/ansible/jenkins-setup/test1.yml"
+    command = "ansible-playbook -i ${self.public_ip}, --private-key /home/easwar/MyNewKeyPair.pem -u ubuntu --ssh-extra-args='-o StrictHostKeyChecking=no' /home/easwar/ansible/jenkins-setup/test2.yml"
   }
 }
 
