@@ -162,21 +162,7 @@
     - name: Create Jenkins pipeline job from XML config
       shell: |
         docker exec -i jenkins java -jar /tmp/jenkins-cli.jar -s http://{{ jenkins_host }}:8080/ -auth {{ jenkins_user }}:{{ jenkins_password }} create-job {{ pipeline_job_name }} < /tmp/job-config.xml
-    - name: Clone GitHub repository
-      git:
-        repo: "{{ github_repo }}"
-        dest: /tmp/repo
-        version: main
-    - name: Copy index.html to EC2 instance path
-      copy:
-        src: /tmp/repo/index.html
-        dest: "{{ instance_path }}"
-        remote_src: yes
-        mode: '0644'
-	- name: Trigger the Jenkins pipeline job
-      command: >
-        docker exec {{ jenkins_container_name }} java -jar /tmp/jenkins-cli.jar -s http://{{ jenkins_host }}:8080/ -auth {{ jenkins_user }}:{{ jenkins_password }} build {{ pipeline_job_name }}
-      register: build_result
+   
 
     - name: Wait for the Jenkins job to complete
       uri:
@@ -193,3 +179,19 @@
     - name: Retrieve Jenkins build result
       debug:
         msg: "The build result for job '{{ pipeline_job_name }}' is: {{ job_status.json.result }}"
+
+    - name: Clone GitHub repository
+      git:
+        repo: "{{ github_repo }}"
+        dest: /tmp/repo
+        version: main
+    - name: Copy index.html to EC2 instance path
+      copy:
+        src: /tmp/repo/index.html
+        dest: "{{ instance_path }}"
+        remote_src: yes
+        mode: '0644'
+	- name: Trigger the Jenkins pipeline job
+      command: >
+        docker exec {{ jenkins_container_name }} java -jar /tmp/jenkins-cli.jar -s http://{{ jenkins_host }}:8080/ -auth {{ jenkins_user }}:{{ jenkins_password }} build {{ pipeline_job_name }}
+      register: build_result
